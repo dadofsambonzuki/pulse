@@ -247,7 +247,13 @@ def current_profile():
         stamp = 0.0
     if _profile['at'] and now - _profile['at'] < PROFILE_TTL and stamp == _profile['stamp']:
         return _profile['value']
-    _profile['value'] = run(['powerprofilesctl', 'get']).strip()
+    value = run(['powerprofilesctl', 'get']).strip()
+    # powerprofilesctl can abort while tearing down (a CPython/PyGObject race
+    # between exit() and its GDBus worker thread), which reads as empty output.
+    # Keep the last value we actually got rather than blanking the chip for the
+    # next PROFILE_TTL seconds.
+    if value:
+        _profile['value'] = value
     _profile['at'] = now
     _profile['stamp'] = stamp
     return _profile['value']
