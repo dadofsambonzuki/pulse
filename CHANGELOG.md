@@ -3,6 +3,17 @@
 The version lives in `manifest.json`. Every release bumps it, adds an entry
 here, and is tagged `vX.Y.Z`: a fix bumps the patch, a new capability the minor.
 
+## 1.3.3 - 2026-10-03
+
+### Fixed
+- **The processor collector no longer leaves core dumps behind.** It read the
+  power profile by running `powerprofilesctl get`, a PyGObject script that on
+  Python 3.14 aborts about once in 18,000 runs when the interpreter finalises
+  while a GDBus worker thread is still unreffing a proxy. Four crashes a day
+  showed up in `coredumpctl` and in Omarchy Doctor's journal check. The
+  collector now reads and sets the `ActiveProfile` D-Bus property with
+  `busctl`, which answers in 4 ms and has no interpreter to tear down.
+
 ## 1.3.2 - 2026-09-19
 
 ### Fixed

@@ -228,7 +228,7 @@ def frequency():
             'governor': read(base / 'scaling_governor').strip(), 'driver': read(base / 'scaling_driver').strip(),
             'epp': read(base / 'energy_performance_preference').strip(), 'turbo': turbo}
 
-# The power profile is a fork+exec of powerprofilesctl, measured at 0.146 s —
+# The power profile is a fork+exec, measured at 0.146 s for powerprofilesctl —
 # on its own, 82% of this daemon's entire cost when it ran every tick. The
 # value only changes when somebody changes it, so it is cached. The panel's own
 # profile action invalidates the cache by touching this file, so a switch made
@@ -237,6 +237,22 @@ def frequency():
 PROFILE_TTL = 30
 PROFILE_STAMP = STATE / 'profile-changed'
 _profile = {'value': '', 'at': 0.0, 'stamp': 0.0}
+
+# powerprofilesctl is a PyGObject script. On Python 3.14 it dies about once in
+# 18,000 runs: CPython finalises while its GDBus worker thread is still
+# unreffing a proxy, and PyGILState_Ensure aborts (SIGSEGV/SIGABRT, a core dump
+# each time). The daemon answers the same D-Bus property through busctl in
+# 4 ms with no interpreter to tear down, so the profile is read and written
+# that way instead.
+PROFILE_PROPERTY = ['net.hadess.PowerProfiles', '/net/hadess/PowerProfiles', 'net.hadess.PowerProfiles', 'ActiveProfile']
+
+
+def read_profile():
+    out = run(['busctl', '--system', 'get-property', *PROFILE_PROPERTY, '--json=short'])
+    try:
+        return str(json.loads(out)['data']).strip()
+    except (ValueError, KeyError, TypeError):
+        return ''
 
 
 def current_profile():
@@ -247,7 +263,7 @@ def current_profile():
         stamp = 0.0
     if _profile['at'] and now - _profile['at'] < PROFILE_TTL and stamp == _profile['stamp']:
         return _profile['value']
-    _profile['value'] = run(['powerprofilesctl', 'get']).strip()
+    _profile['value'] = read_profile()
     _profile['at'] = now
     _profile['stamp'] = stamp
     return _profile['value']
@@ -475,7 +491,7 @@ def profile(name):
     # frequencies, governors, or processes directly.
     if name not in PROFILES:
         raise RuntimeError('Unknown power profile.')
-    current = run(['powerprofilesctl', 'get']).strip()
+    current = read_profile()
     if not current:
         raise RuntimeError('power-profiles-daemon is not available.')
     if current == name:
@@ -490,9 +506,9 @@ def profile(name):
         except OSError:
             pass
     try:
-        result = subprocess.run(['powerprofilesctl', 'set', name], capture_output=True, text=True, timeout=5, check=False)
+        result = subprocess.run(['busctl', '--system', 'set-property', *PROFILE_PROPERTY, 's', name], capture_output=True, text=True, timeout=5, check=False)
     except (OSError, subprocess.TimeoutExpired):
-        raise RuntimeError('powerprofilesctl did not respond.')
+        raise RuntimeError('power-profiles-daemon did not respond.')
     if result.returncode:
         raise RuntimeError('Profile change refused: '+(result.stderr.strip().splitlines() or ['no reason given'])[-1][:120])
     invalidate()
